@@ -1,7 +1,9 @@
 use clap::Parser;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use serde::{Serialize, Deserialize};
 
+#[derive(Serialize, Deserialize)]
 struct TodoList {
     // True = to do / False = done
     items : HashMap<String, bool>,
@@ -14,8 +16,16 @@ impl TodoList {
     }
 
     fn add(&mut self, key: String ) {
-        if let Entry::Vacant(entry ) = self.items.entry(key) {}
-        entry.insert(True);
+        if let Entry::Vacant(entry ) = self.items.entry(key) {
+            entry.insert(true);
+        }
+    }
+
+    fn remove(&mut self, key: String) -> Result<String, String>{
+        match self.items.remove(&key) {
+            Some(_) => Ok(key),
+            None => Err(key)
+        }        
     }
 
     fn mark(&mut self, key: String, value: bool) -> Result<String, String>{
@@ -24,33 +34,93 @@ impl TodoList {
         Ok(key)
     }
 
-    fn list(& self) -> (impl Iterator<Item = &Sting>, impl Iterator<Item = &Sting>) {
+    fn list(& self) -> (impl Iterator<Item = &String>, impl Iterator<Item = &String>) {
         (
             self.items.iter().filter(|x| *x.1 == true).map(|x| x.0),
             self.items.iter().filter(|x| *x.1 == false).map(|x| x.0),
         )
     }
 
+    fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let data = serde_json::to_string_pretty(self)?;
+        let _ = std::fs::write("todo.json", data);
+        Ok(())
+    }
+
+    fn load() -> Result<TodoList, Box<dyn std::error::Error>> {
+        match std::fs::read_to_string("todo.json") {
+            Ok(data) => Ok(serde_json::from_str(&data)?),
+            Err(_) => Ok(TodoList::new()),
+        }
+    }
 }
 
 #[derive(Parser)]
-struct  Cli {
+struct Cli {
     command: String,
-    key: String,
+    key: Option<String>,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
 
-    let args = Cli::parser();
-    println!("Command line: {} {}", args.command, args.key);
+    let args = Cli::parse();
 
-    let action = std::env::args().nth(1)
-            .expect("Please specify an action");
+    let mut todo = TodoList::load()?;
 
-    let item = std::env::args().nth(2)
-        .expect("Please specify an item");
 
-    println!("{:?}, {:?}", action, item);
+    let result = match args.command.as_str() {
+        "add" => match args.key {
+            Some(key) => {
+                todo.add(key);
+                todo.save()?;
+                Ok(())
+            }
+            None => Err("Key cannot be empty!".to_string()),
+        },
+
+        "remove" => match args.key {
+            Some(key) => {
+                todo.remove(key).map_err(|e| format!("Invalid key {}", e))?;
+                todo.save()?;
+                Ok(())
+            }
+            None => Err("Key cannot be empty!".to_string()),
+        },
+
+        "mark-done" => match args.key {
+            Some(key) => {
+                todo.mark(key, false)
+                    .map_err(|e| format!("Invalid key {}", e))?;
+                todo.save()?;
+                Ok(())
+            }
+            None => Err("Key cannot be empty!".to_string())
+        },
+
+        "list" => {
+            let (todo_items, done_items) = todo.list();
+            println!("# TO DO");
+            println!();
+            todo_items.for_each(|x| println!(" * {}", x));
+
+            println!();
+
+            println!("# DONE");
+            println!();
+
+            done_items.for_each(|x| println!(" * {}", x));
+
+            Ok(())
+        }
+        cmd => Err(format!("Command {} not recognised", cmd)),
+
+    };
+
+    match result {
+        Err(e) => println!("ERROR: {}", e),
+        Ok(_) => println!("SUCCESS"),
+    }
+    Ok(())
 
 }
 
@@ -68,7 +138,7 @@ mod tests {
     fn add_item() {
         let mut todo = TodoList::new();
         todo.add(String::from("Some thing to do"));
-        assert_eq!(todo.items.get("Some thing to do "), Some(&true));
+        assert_eq!(todo.items.get("Some thing to do"), Some(&true));
     }
     #[test]
     fn add_item_already_exist() {
